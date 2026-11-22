@@ -8,7 +8,8 @@ import {DatabaseSync} from 'node:sqlite';
 import {_electron} from 'playwright';
 
 if (process.platform !== 'win32' || process.env.CI !== 'true') throw Error('Disposable Windows CI only.');
-const [baseline, candidate, manifestFile] = process.argv.slice(2).map(path => resolve(path));
+const [phase, candidateArg, manifestArg] = process.argv.slice(2);
+const candidate = resolve(candidateArg), manifestFile = resolve(manifestArg);
 const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
 const release = JSON.parse(Buffer.from(manifest.payload, 'base64'));
 let executable;
@@ -18,10 +19,6 @@ const tree = (root, prefix = '') => Object.fromEntries(readdirSync(root, {withFi
   const name = prefix + entry.name;
   return entry.isDirectory() ? Object.entries(tree(join(root, entry.name), name + '/')) : [[name, digest(readFileSync(join(root, entry.name)))]];
 }));
-const install = file => {
-  const result = spawnSync(file, ['/S'], {timeout: 180000, encoding: 'utf8'});
-  assert.equal(result.status, 0, 'Installer failed: ' + result.stderr);
-};
 let app;
 async function open() {
   assert.ok(existsSync(executable), 'The installed executable is missing: ' + executable);
@@ -33,16 +30,16 @@ function snapshot(dataDir) {
   const db = new DatabaseSync(join(dataDir, 'household.sqlite'), {readOnly: true});
   try {
     return {content: db.prepare('SELECT content FROM household_preview WHERE id=1').get().content,
-      settings: db.prepare('SELECT key,value FROM household_settings ORDER BY key').all(),
+      settings: db.prepare('SELECT key,value FROM household_settings ORDER BY key').all().map(row => ({...row})),
       setup: digest(readFileSync(join(dataDir, 'ostrow-clan-setup.bin')))};
   } finally { db.close(); }
 }
 
 try {
-  install(baseline);
   executable = execFileSync('powershell.exe', ['-NoProfile', '-Command', "Get-ChildItem ($env:LOCALAPPDATA + '\\Programs') -Filter 'Ostrow Clan.exe' -Recurse | Select-Object -First 1 -ExpandProperty FullName"], {encoding: 'utf8'}).trim();
   assert.ok(executable, 'The baseline did not install its executable');
   console.log('Installed executable found');
+  if (phase === 'seed') {
   let page = await open();
   await page.waitForURL('file:///**/setup.html', {timeout: 30000});
   const location = await app.evaluate(({app, safeStorage}) => {
@@ -78,8 +75,12 @@ try {
   page = await open(); await page.waitForURL('http://127.0.0.1:*/**', {timeout: 45000});
   const before = snapshot(location.dataDir), sourceBefore = tree(location.source);
   await app.close(); app = null;
-  install(candidate);
-  page = await open(); await page.waitForURL('http://127.0.0.1:*/**', {timeout: 45000});
+  writeFileSync('synthetic-profile.json', JSON.stringify({location, before, sourceBefore}));
+  console.log('Synthetic populated profile and modified source saved');
+  } else {
+  assert.equal(phase, 'verify');
+  const {location, before, sourceBefore} = JSON.parse(readFileSync('synthetic-profile.json', 'utf8'));
+  let page = await open(); await page.waitForURL('http://127.0.0.1:*/**', {timeout: 45000});
   await page.getByRole('link', {name: 'Settings', exact: true}).click();
   await page.getByRole('heading', {name: 'App updates', exact: true}).waitFor();
   assert.deepEqual(snapshot(location.dataDir), before);
@@ -146,6 +147,7 @@ try {
     updaterHopUsesOlderVersionAdapter: true, phases: [...new Set(result.phases)]};
   writeFileSync('windows-verification.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
+  }
 } finally {
   if (app) try { await app.close(); } catch {}
   spawnSync('taskkill.exe', ['/F', '/IM', 'Ostrow Clan.exe'], {stdio: 'ignore'});
