@@ -41,6 +41,29 @@ jobs:
           if (-not $install.WaitForExit(120000) -or $install.ExitCode -ne 0) { throw 'Baseline install failed' }
           node windows-verify-release.mjs seed "$candidate" candidate/update.json
           if ($LASTEXITCODE -ne 0) { throw 'Profile setup failed' }
+      - name: Diagnose the disposable installation environment
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "$env:LOCALAPPDATA/Programs" -Filter 'Ostrow Clan.exe' -Recurse | Select-Object -First 1
+          $dir = $exe.DirectoryName
+          Write-Output "Install directory: $dir"
+          Write-Output "TEMP: $env:TEMP; TMP: $env:TMP"
+          Get-ChildItem $dir | Select-Object Name, Length
+          Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object DisplayName -eq 'Ostrow Clan' | Select-Object UninstallString, InstallLocation, DisplayVersion
+          $locked = @()
+          Get-ChildItem $dir -File -Recurse | ForEach-Object {
+            $path = $_.FullName; $probe = $path + '.ci-probe'
+            try { [IO.File]::Move($path, $probe); [IO.File]::Move($probe, $path) }
+            catch { $locked += ($path + ': ' + $_.Exception.Message); if (Test-Path $probe) { [IO.File]::Move($probe, $path) } }
+          }
+          $locked | Write-Output
+          $test = Join-Path $dir 'ci-volume-probe.tmp'
+          $destination = Join-Path $env:TEMP 'ci-volume-probe.tmp'
+          [IO.File]::WriteAllText($test, 'synthetic probe')
+          Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class NativeMove { [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool MoveFile(string from, string to); }'
+          if ([NativeMove]::MoveFile($test, $destination)) { Write-Output 'Native cross-directory rename works'; Remove-Item $destination }
+          else { Write-Output ('Native rename error: ' + [Runtime.InteropServices.Marshal]::GetLastWin32Error()); Remove-Item $test }
+          if ($locked.Count -gt 0) { throw 'A disposable installation file is locked' }
       - name: Upgrade and verify every customization
         env:
           DEBUG: pw:browser
