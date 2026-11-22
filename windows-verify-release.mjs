@@ -11,7 +11,7 @@ if (process.platform !== 'win32' || process.env.CI !== 'true') throw Error('Disp
 const [baseline, candidate, manifestFile] = process.argv.slice(2).map(path => resolve(path));
 const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
 const release = JSON.parse(Buffer.from(manifest.payload, 'base64'));
-const executable = join(process.env.LOCALAPPDATA, 'Programs', 'Ostrow Clan', 'Ostrow Clan.exe');
+let executable;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const tree = (root, prefix = '') => Object.fromEntries(readdirSync(root, {withFileTypes: true}).flatMap(entry => {
@@ -24,6 +24,7 @@ const install = file => {
 };
 let app;
 async function open() {
+  assert.ok(existsSync(executable), 'The installed executable is missing: ' + executable);
   app = await _electron.launch({executablePath: executable, timeout: 60000});
   const page = await app.firstWindow();
   return page;
@@ -39,6 +40,9 @@ function snapshot(dataDir) {
 
 try {
   install(baseline);
+  executable = execFileSync('powershell.exe', ['-NoProfile', '-Command', "Get-ChildItem ($env:LOCALAPPDATA + '\\Programs') -Filter 'Ostrow Clan.exe' -Recurse | Select-Object -First 1 -ExpandProperty FullName"], {encoding: 'utf8'}).trim();
+  assert.ok(executable, 'The baseline did not install its executable');
+  console.log('Installed executable found');
   let page = await open();
   await page.waitForURL('file:///**/setup.html', {timeout: 30000});
   const location = await app.evaluate(({app, safeStorage}) => {
