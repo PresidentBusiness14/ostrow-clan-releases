@@ -18,7 +18,9 @@ jobs:
         with:
           node-version: '24'
       - name: Install verification tools
-        run: npm install --no-audit --no-fund playwright@1.56.1
+        run: npm install --no-audit --no-fund playwright@1.62.1
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
       - name: Download audited candidate and baseline
         env:
           GH_TOKEN: ${{ github.token }}
@@ -29,6 +31,8 @@ jobs:
           gh release download $env:CANDIDATE_TAG --repo $env:GITHUB_REPOSITORY --pattern 'Ostrow-Clan-Setup-*.exe' --pattern 'update.json' --dir candidate
           gh release download verification-baseline-0.1.1 --repo $env:GITHUB_REPOSITORY --pattern '*.exe' --dir baseline
       - name: Verify real Windows install and preservation
+        env:
+          DEBUG: pw:browser
         shell: pwsh
         run: |
           $baseline = (Get-ChildItem baseline/*.exe).FullName
