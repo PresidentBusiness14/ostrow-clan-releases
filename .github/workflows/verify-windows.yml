@@ -34,6 +34,15 @@ jobs:
           $baseline = (Get-ChildItem baseline/*.exe).FullName
           $candidate = (Get-ChildItem candidate/*.exe).FullName
           node windows-verify-release.mjs "$baseline" "$candidate" candidate/update.json
+      - name: Run the embedded editable source tests on Windows
+        shell: pwsh
+        run: |
+          $candidate = (Get-ChildItem candidate/*.exe).FullName
+          & 'C:\Program Files\7-Zip\7z.exe' x -y -oembedded "$candidate" '$DOCUMENTS/*'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not extract editable source' }
+          $source = Join-Path $PWD 'embedded\$DOCUMENTS\Ostrow Clan\Customize with Codex'
+          npm test --prefix "$source"
+          if ($LASTEXITCODE -ne 0) { throw 'Editable source tests failed' }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
