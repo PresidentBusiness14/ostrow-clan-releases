@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {execFileSync, spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {existsSync, readFileSync, writeFileSync, readdirSync} from 'node:fs';
-import {join, resolve} from 'node:path';
+import {dirname, join, resolve} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {_electron} from 'playwright';
 
@@ -15,6 +15,16 @@ const release = JSON.parse(Buffer.from(manifest.payload, 'base64'));
 let executable;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+function verifyUninstaller() {
+  const bytes = readFileSync(join(dirname(executable), 'Uninstall Ostrow Clan.exe'));
+  const table = Array.from({length: 256}, (_, n) => {
+    for (let k = 0; k < 8; k++) n = n & 1 ? 0xedb88320 ^ (n >>> 1) : n >>> 1;
+    return n >>> 0;
+  });
+  let crc = 0xffffffff;
+  for (const byte of bytes.subarray(512, -4)) crc = table[(crc ^ byte) & 255] ^ (crc >>> 8);
+  assert.equal((crc ^ 0xffffffff) >>> 0, bytes.readUInt32LE(bytes.length - 4), 'Installed uninstaller integrity check failed');
+}
 const tree = (root, prefix = '') => Object.fromEntries(readdirSync(root, {withFileTypes: true}).flatMap(entry => {
   const name = prefix + entry.name;
   return entry.isDirectory() ? Object.entries(tree(join(root, entry.name), name + '/')) : [[name, digest(readFileSync(join(root, entry.name)))]];
@@ -80,6 +90,7 @@ try {
   } else {
   assert.equal(phase, 'verify');
   const {location, before, sourceBefore} = JSON.parse(readFileSync('synthetic-profile.json', 'utf8'));
+  verifyUninstaller();
   let page = await open(); await page.waitForURL('http://127.0.0.1:*/**', {timeout: 45000});
   await page.getByRole('link', {name: 'Settings', exact: true}).click();
   await page.getByRole('heading', {name: 'App updates', exact: true}).waitFor();
@@ -142,6 +153,7 @@ try {
   assert.deepEqual(snapshot(location.dataDir), before);
   assert.deepEqual(tree(location.source), sourceBefore);
   const report = {version: release.version, baseline: '0.1.1', actualInstallerUpgrade: true, dataPreserved: true,
+    installedUninstallerCrcVerified: true,
     protectedSetupPreserved: true, modifiedSourcePreserved: true, customBlocked: true,
     signedDownload: true, realInstallerAndHelper: true, visibleAutomaticReopen: true,
     updaterHopUsesOlderVersionAdapter: true, phases: [...new Set(result.phases)]};
