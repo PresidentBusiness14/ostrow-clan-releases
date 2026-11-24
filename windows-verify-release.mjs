@@ -84,28 +84,30 @@ try {
   await app.close(); app = null;
   page = await open(); await page.waitForURL('http://127.0.0.1:*/**', {timeout: 45000});
   const before = snapshot(location.dataDir), sourceBefore = tree(location.source);
+  const baselineVersion = await app.evaluate(({app}) => app.getVersion());
+  assert.equal(baselineVersion, '0.1.2');
+  assert.notEqual(baselineVersion, release.version);
   await app.close(); app = null;
-  writeFileSync('synthetic-profile.json', JSON.stringify({location, before, sourceBefore}));
+  writeFileSync('synthetic-profile.json', JSON.stringify({location, before, sourceBefore, baselineVersion}));
   console.log('Synthetic populated profile and modified source saved');
   } else {
   assert.equal(phase, 'verify');
-  const {location, before, sourceBefore} = JSON.parse(readFileSync('synthetic-profile.json', 'utf8'));
+  const {location, before, sourceBefore, baselineVersion} = JSON.parse(readFileSync('synthetic-profile.json', 'utf8'));
   verifyUninstaller();
   let page = await open(); await page.waitForURL('http://127.0.0.1:*/**', {timeout: 45000});
   await page.getByRole('link', {name: 'Settings', exact: true}).click();
   await page.getByRole('heading', {name: 'App updates', exact: true}).waitFor();
   assert.deepEqual(snapshot(location.dataDir), before);
   assert.deepEqual(tree(location.source), sourceBefore);
-  assert.ok(existsSync(join(location.dataDir, 'backups', 'before-' + release.version, 'manifest.json')));
   const installerInfo = await app.evaluate(({app}) => ({version: app.getVersion(), packaged: app.isPackaged}));
-  assert.equal(installerInfo.version, release.version); assert.equal(installerInfo.packaged, true);
+  assert.equal(installerInfo.version, baselineVersion); assert.equal(installerInfo.packaged, true);
   const guidePath = join(location.source, '..', 'START-HERE.txt');
   const guide = readFileSync(guidePath).toString('utf16le');
   assert.ok(guide.includes(location.source));
   await page.screenshot({path: 'windows-update-settings.png'});
 
-  // Baseline 0.1.1 had no updater. Exercise the shipped candidate controller
-  // with an older-version adapter against its real signed installer and helper.
+  // Exercise the actual installed baseline updater and its native helper.
+  // Only the feed response is redirected to the not-yet-published candidate.
   const result = await app.evaluate(async ({app}, {manifest, version}) => {
     const req = process.getBuiltinModule('node:module').createRequire(app.getAppPath() + '/package.json');
     const fs = req('node:fs'), path = req('node:path');
@@ -115,7 +117,7 @@ try {
     const {launchWindowsInstaller} = req(path.join(app.getAppPath(), 'desktop/update-installer.mjs'));
     const config = JSON.parse(fs.readFileSync(path.join(app.getAppPath(), 'desktop/release.json')));
     const dataDir = app.getPath('userData'), phases = [];
-    const options = {version: '0.1.1', config, dataDir,
+    const options = {version: app.getVersion(), config, dataDir,
       fetcher: async (url, options) => url.endsWith('/update.json') ? Response.json(manifest) : fetch(url, options)};
     const custom = new AppUpdater({...options, canInstall: () => false,
       launchInstall: async () => { throw Error('Custom installer guard failed'); }});
@@ -150,13 +152,15 @@ try {
   assert.equal(complete, true, 'Updated app did not reopen and acknowledge startup');
   const visible = execFileSync('powershell.exe', ['-NoProfile', '-Command', "Get-Process -Name 'Ostrow Clan' | Where-Object MainWindowHandle -ne 0 | Select-Object -ExpandProperty Id"], {encoding: 'utf8'}).trim();
   assert.ok(visible, 'Reopened app has no visible window');
+  verifyUninstaller();
+  assert.ok(existsSync(join(location.dataDir, 'backups', 'before-' + release.version, 'manifest.json')));
   assert.deepEqual(snapshot(location.dataDir), before);
   assert.deepEqual(tree(location.source), sourceBefore);
-  const report = {version: release.version, baseline: '0.1.1', actualInstallerUpgrade: true, dataPreserved: true,
+  const report = {version: release.version, baseline: baselineVersion, actualInstallerUpgrade: true, dataPreserved: true,
     installedUninstallerCrcVerified: true,
     protectedSetupPreserved: true, modifiedSourcePreserved: true, customBlocked: true,
     signedDownload: true, realInstallerAndHelper: true, visibleAutomaticReopen: true,
-    updaterHopUsesOlderVersionAdapter: true, phases: [...new Set(result.phases)]};
+    updaterHopUsesOlderVersionAdapter: false, phases: [...new Set(result.phases)]};
   writeFileSync('windows-verification.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
   }
