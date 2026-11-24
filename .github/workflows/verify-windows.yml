@@ -33,7 +33,7 @@ jobs:
         run: |
           if ($env:CANDIDATE_TAG -notmatch '^v\d+\.\d+\.\d+$') { throw 'Invalid tag' }
           gh release download $env:CANDIDATE_TAG --repo $env:GITHUB_REPOSITORY --pattern 'Ostrow-Clan-Setup-*.exe' --pattern 'update.json' --dir candidate
-          gh release download verification-baseline-0.1.1 --repo $env:GITHUB_REPOSITORY --pattern '*.exe' --dir baseline
+          gh release download v0.1.2 --repo $env:GITHUB_REPOSITORY --pattern '*.exe' --dir baseline
       - name: Install baseline and populate profile
         env:
           DEBUG: pw:browser
@@ -81,8 +81,6 @@ jobs:
         shell: pwsh
         run: |
           $candidate = (Get-ChildItem candidate/*.exe).FullName
-          $install = Start-Process $candidate -ArgumentList '/S' -PassThru
-          if (-not $install.WaitForExit(120000) -or $install.ExitCode -ne 0) { throw 'Candidate install failed' }
           node windows-verify-release.mjs verify "$candidate" candidate/update.json
           if ($LASTEXITCODE -ne 0) { throw 'Preservation or updater check failed' }
       - name: Run the embedded editable source tests on Windows
